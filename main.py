@@ -14,6 +14,9 @@ Phase 3a:
 Phase 3b/3c:
     python main.py extract-openaq        [--start ...] [--end ...] [--cities ...]
     python main.py extract-open-meteo-aq [--start ...] [--end ...] [--cities ...]
+
+Phase 4:
+    python main.py transform-preview     # raw -> clean rows, CSVs in data/processed/
 """
 from __future__ import annotations
 
@@ -42,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command",
                         choices=["init-db", "seed-locations", "check", "extract-weather",
                                  "discover-stations", "extract-openaq",
-                                 "extract-open-meteo-aq"])
+                                 "extract-open-meteo-aq", "transform-preview"])
     parser.add_argument("--radius-km", type=float, default=25,
                         help="discover-stations search radius, max 25 (default 25)")
     parser.add_argument("--max-per-city", type=int, default=3,
@@ -66,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_extract_openaq(settings, args)
     if args.command == "extract-open-meteo-aq":
         return run_extract_open_meteo_aq(settings, args)
+    if args.command == "transform-preview":
+        return run_transform_preview(settings, args)
 
     with get_connection(settings) as conn:
         if args.command == "init-db":
@@ -142,6 +147,52 @@ def run_discover_stations(settings, args) -> int:
             print(f"    - {s.name[:40]:<40} {s.distance_km:>5.1f} km  {kind:<8} "
                   f"{','.join(sorted(s.parameters & set(oaq.TARGET_PARAMETERS)))}")
     print(f"\nwrote {out.relative_to(PROJECT_ROOT)}")
+    return 0
+
+
+def run_transform_preview(settings, args) -> int:
+    """Phase 4: transform everything in raw, report where every row went, write CSVs."""
+    import csv
+
+    from src.common.config import PROJECT_ROOT, ConfigError
+    from src.transform.run_transform import SOURCES, load_station_infos, transform_source
+
+    cities = load_cities()
+    try:
+        infos = load_station_infos(cities)
+    except ConfigError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+    out_dir = PROJECT_ROOT / "data" / "processed"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with get_connection(settings) as conn:
+        for source in SOURCES:
+            rep = transform_source(conn, source, cities, infos)
+            res = rep.result
+            print(f"\n=== {source} ===")
+            print(f"  raw responses read : {rep.responses}")
+            print(f"  kept               : {len(res.kept)}")
+            print(f"  duplicates dropped : {rep.duplicates_dropped}  (same hour seen in several responses)")
+            print(f"  rejected           : {len(res.rejected)}  {rep.rejected_by_rule() or ''}")
+            print(f"  skipped            : {sum(res.skipped.values())}  {res.skipped or ''}")
+            for rej in res.rejected[:3]:
+                print(f"    reject example -> {rej.entity_key} [{rej.rule_name}] {rej.reason[:90]}")
+            if res.kept:
+                path = out_dir / f"{source}.csv"
+                rows = sorted((r.as_dict() for r in res.kept),
+                              key=lambda d: (d["city_key"], d["observed_at_utc"]))
+                with open(path, "w", newline="", encoding="utf-8") as fh:
+                    w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+                    w.writeheader()
+                    w.writerows(rows)
+                print(f"  wrote {path.relative_to(PROJECT_ROOT)}")
+                converted = [r for r in res.kept
+                             if getattr(r, "original_unit", "") in ("ppb", "ppm")]
+                if converted:
+                    c = converted[0]
+                    print(f"  unit conversion example: {c.city_key} {c.pollutant_code} "
+                          f"{c.original_value} {c.original_unit} -> {c.value_ugm3} µg/m³")
     return 0
 
 

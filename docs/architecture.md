@@ -189,3 +189,33 @@ collided and the second was silently dropped. Fix: add `entity_key` to the uniqu
 **Honest caveat.** CAMS is a model: ~11 km in Europe; India comes from the coarser global
 model. Low-cost sensor readings are less reliable than reference monitors. Marts must keep
 `station_type` so comparisons can be filtered.
+
+## 10. Phase 4 — Transformations
+
+Input: rows in `raw.api_response`. Output: clean records in memory (CSV preview in
+`data/processed/`). Loading into `core` is Phase 6. Transforming FROM raw (not from live
+API calls) means any rule change can be re-applied to history without re-fetching.
+
+**Every input row lands in exactly one bucket:** kept, rejected (with a rule name, saved to
+`ops.rejected_record` from Phase 6), or skipped (deliberately not loaded, not bad data).
+
+| Step | Rule | Why |
+|---|---|---|
+| Columns → rows | Open-Meteo returns one array per variable; we emit one record per hour | the fact grain is one row per city-hour |
+| Time | all timestamps → aware UTC; `local_hour` and `date_key` from the city's IANA timezone | "AQI by hour of day" means local hour; Delhi is UTC+05:30 so its hours fall on :30 UTC |
+| Future hours | skipped if observation time > ingestion time | forecast endpoint returns predictions for later today |
+| Units | everything to µg/m³; gases: ppb × molecular weight / 24.45; ppm = 1000 ppb | OpenAQ mixes µg/m³, ppb and ppm (seen live in Delhi and London) |
+| Ranges | weather values outside DB CHECK bounds → whole row rejected | fail here with a reason, not at load time |
+| Negatives | negative concentrations rejected, never clipped to 0 | clipping invents data |
+| Nulls | single nulls kept; hour with all nulls skipped; null concentration skipped | a missing value is not an error |
+| Duplicates | same natural key seen in several raw responses → newest ingestion wins | model values get revised; latest is best |
+| AQI | Open-Meteo's own AQI is dropped | AQI is computed in dbt with one formula for every source (D4) |
+
+**Conversion caveat:** 24.45 L/mol assumes 25 °C (US EPA convention). EU legislation uses
+20 °C reference conditions for gases, a difference of about 1.7 %. One convention is used
+for all cities so they stay comparable; it is documented, not hidden.
+
+**Not done here on purpose:** derived features (AQI category, season, wind category) go in
+dbt marts (Phase 12) because they are business rules, not cleaning. Plain Python is used
+instead of pandas: row-level rules with a rejection reason per row are clearer as loops,
+and the volume (thousands of rows) doesn't need vectorisation.
