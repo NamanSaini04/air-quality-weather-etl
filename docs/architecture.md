@@ -86,7 +86,7 @@ Delhi 08:00 is 02:30 UTC.
 **D8 — Watermark per source per entity.** One global watermark would skip a failed city's
 data forever once other cities succeed. Watermarks only move forward (`GREATEST`).
 
-**D9 — Idempotency at three levels.** Raw: unique on payload hash. Core: unique natural
+**D9 — Idempotency at three levels.** Raw: unique on (source, endpoint, entity, payload hash) — entity added in Phase 3b, see §9. Core: unique natural
 keys + `ON CONFLICT DO UPDATE`. Dimensions: upsert only when values actually changed.
 
 **D10 — No Kafka/Spark.** Volume: 5 cities × 24 h × ~6 pollutants × a few stations ≈ a few
@@ -155,3 +155,37 @@ reviewable and reproducible.
 (text says lat,lon; one example shows lon,lat). We send lat,lon and fail if any returned
 station is more than radius + 5 km away. `meta.found` can be a string like ">1000", so
 pagination stops on a short page, with a hard cap of 20 pages.
+
+**Live result (4 Nov 2026):** all 5 cities have active PM2.5 in OpenAQ, but Manchester and
+Birmingham only via low-cost AirGradient sensors. Their government (AURN/EEA) monitors are
+listed in OpenAQ but were last updated 26–28 May 2026, so the 7-day rule rejected them.
+OpenAQ also lists some stations twice (same name and code, different location IDs).
+
+## 9. Phase 3b/3c — Air-quality extraction (decision B)
+
+Mixed instruments make cross-city comparison unfair, and one source silently stopped
+updating for months. So there are two air-quality sources:
+
+| Source | Role | Covers |
+|---|---|---|
+| Open-Meteo Air Quality (CAMS model) | **Consistent baseline** — city rankings use this | all 5 cities, same method |
+| OpenAQ (measurements) | **Ground truth where available** — modelled-vs-measured analysis | stations in `config/stations.yaml` |
+
+**Shared Open-Meteo code.** Weather and air quality differ only in URL, variables and
+expected units, so both are an `OpenMeteoSpec` run by one extraction loop (`open_meteo.py`).
+
+**OpenAQ extractor.** One target per sensor from `stations.yaml`; `/v3/sensors/{id}/hours`
+with whole-UTC-day windows; pagination; failure isolation per station. If a sensor returns
+a different pollutant than the config says, it fails with "re-run discover-stations".
+
+**Unit symbols.** "µ" (micro sign) and "μ" (Greek mu) look identical but are different
+characters. Unit checks normalise them.
+
+**Bug found and fixed:** raw dedup originally keyed on (source, endpoint, hash). OpenAQ hourly
+results carry no sensor id, so two sensors with identical bodies (commonly: both empty)
+collided and the second was silently dropped. Fix: add `entity_key` to the unique index
+(`ux_api_response_dedup_v2`, `NULLS NOT DISTINCT`). Existing databases upgrade via `init-db`.
+
+**Honest caveat.** CAMS is a model: ~11 km in Europe; India comes from the coarser global
+model. Low-cost sensor readings are less reliable than reference monitors. Marts must keep
+`station_type` so comparisons can be filtered.

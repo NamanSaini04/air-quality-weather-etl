@@ -37,7 +37,7 @@ def save_raw_response(conn: psycopg.Connection, *, run_id: uuid.UUID, source: st
                  (run_id, source, endpoint, entity_key, request_params,
                   http_status, payload, payload_text, payload_sha256)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT (source, endpoint, payload_sha256) DO NOTHING""",
+               ON CONFLICT (source, endpoint, entity_key, payload_sha256) DO NOTHING""",
             (run_id, source, endpoint, entity_key, json.dumps(params, default=str),
              response.status_code,
              json.dumps(response.data) if response.data is not None else None,

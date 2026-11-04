@@ -10,6 +10,10 @@ Phase 2:
 
 Phase 3a:
     python main.py discover-stations [--radius-km 25] [--max-per-city 3]
+
+Phase 3b/3c:
+    python main.py extract-openaq        [--start ...] [--end ...] [--cities ...]
+    python main.py extract-open-meteo-aq [--start ...] [--end ...] [--cities ...]
 """
 from __future__ import annotations
 
@@ -37,7 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Air Quality & Weather ETL")
     parser.add_argument("command",
                         choices=["init-db", "seed-locations", "check", "extract-weather",
-                                 "discover-stations"])
+                                 "discover-stations", "extract-openaq",
+                                 "extract-open-meteo-aq"])
     parser.add_argument("--radius-km", type=float, default=25,
                         help="discover-stations search radius, max 25 (default 25)")
     parser.add_argument("--max-per-city", type=int, default=3,
@@ -57,6 +62,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_extract_weather(settings, args)
     if args.command == "discover-stations":
         return run_discover_stations(settings, args)
+    if args.command == "extract-openaq":
+        return run_extract_openaq(settings, args)
+    if args.command == "extract-open-meteo-aq":
+        return run_extract_open_meteo_aq(settings, args)
 
     with get_connection(settings) as conn:
         if args.command == "init-db":
@@ -136,35 +145,81 @@ def run_discover_stations(settings, args) -> int:
     return 0
 
 
-def run_extract_weather(settings, args) -> int:
+def _window_and_cities(args):
     today = datetime.now(timezone.utc).date()
     start = args.start or today - timedelta(days=1)
     end = args.end or today
     cities = load_cities()
-    if args.cities:
-        wanted = {c.strip() for c in args.cities.split(",")}
+    wanted = {c.strip() for c in args.cities.split(",")} if args.cities else None
+    if wanted:
         cities = [c for c in cities if c.city_key in wanted]
-        if not cities:
-            print(f"no matching cities for {wanted}")
-            return 2
+    return start, end, cities, wanted
 
+
+def _run_single_task(settings, start, end, dag_id, work, http_client) -> int:
+    """Open DB + HTTP client, record a pipeline run around one extract task, report."""
     # autocommit: each `with conn.transaction()` block is its own committed unit,
     # so London's data survives even if Delhi fails afterwards.
-    with get_connection(settings, autocommit=True) as conn, \
-         ResilientHttpClient(rate_limiter=RateLimiter(0.25)) as client:
-        run_id = start_pipeline_run(conn, data_interval_start=start, data_interval_end=end)
+    with get_connection(settings, autocommit=True) as conn, http_client as client:
+        run_id = start_pipeline_run(conn, dag_id=dag_id,
+                                    data_interval_start=start, data_interval_end=end)
         try:
-            details = extract_weather(conn, client, cities, start, end, run_id)
+            details = work(conn, client, run_id)
         except ExtractionError as exc:
             finish_pipeline_run(conn, run_id, "failed", str(exc))
             print(f"FAILED run {run_id}: {exc}")
             return 1
         finish_pipeline_run(conn, run_id, "success")
-    print(f"run {run_id} OK")
-    for key, stats in details["cities"].items():
-        print(f"  {key:<12} rows={stats['rows']:<5} requests={stats['requests']} "
-              f"new_raw={stats['new_raw']}")
+    print(f"run {run_id} OK  ({start} .. {end})")
+    for key, st in (details.get("cities") or details.get("stations") or {}).items():
+        label = f"{key} {st.get('name', '')}".strip()[:45]
+        print(f"  {label:<45} rows={st['rows']:<5} requests={st['requests']:<3} "
+              f"new_raw={st['new_raw']}")
     return 0
+
+
+def run_extract_weather(settings, args) -> int:
+    start, end, cities, wanted = _window_and_cities(args)
+    if not cities:
+        print(f"no matching cities for {wanted}")
+        return 2
+    return _run_single_task(
+        settings, start, end, "extract_weather",
+        lambda conn, client, run_id: extract_weather(conn, client, cities, start, end, run_id),
+        ResilientHttpClient(rate_limiter=RateLimiter(0.25)))
+
+
+def run_extract_open_meteo_aq(settings, args) -> int:
+    from src.extract.open_meteo_aq import extract_open_meteo_aq
+    start, end, cities, wanted = _window_and_cities(args)
+    if not cities:
+        print(f"no matching cities for {wanted}")
+        return 2
+    return _run_single_task(
+        settings, start, end, "extract_open_meteo_aq",
+        lambda conn, client, run_id: extract_open_meteo_aq(conn, client, cities, start, end,
+                                                           run_id),
+        ResilientHttpClient(rate_limiter=RateLimiter(0.25)))
+
+
+def run_extract_openaq(settings, args) -> int:
+    from src.common.config import ConfigError
+    from src.extract.openaq_api import OpenAQClient
+    from src.extract.openaq_measurements import extract_openaq, load_sensor_targets
+    start, end, _, wanted = _window_and_cities(args)
+    try:
+        targets = load_sensor_targets(city_keys=wanted)
+        client = OpenAQClient(settings.openaq_api_key)
+    except ConfigError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+    stations = len({t.station_key for t in targets})
+    print(f"{len(targets)} sensors at {stations} stations; ~{len(targets) * 1.1:.0f}s "
+          f"at OpenAQ's free rate limit")
+    return _run_single_task(
+        settings, start, end, "extract_openaq",
+        lambda conn, c, run_id: extract_openaq(conn, c, targets, start, end, run_id),
+        client)
 
 
 if __name__ == "__main__":

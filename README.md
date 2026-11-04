@@ -3,7 +3,7 @@
 Batch ETL pipeline: hourly weather (Open-Meteo) and air-quality (OpenAQ) data for 5 UK
 and Indian cities → validated, incremental, idempotent loads into PostgreSQL → dbt marts.
 
-> Status: **Phase 2 complete** — schema, weather extractor with retries, raw landing, run logging.
+> Status: **Phase 3 built** — weather + two air-quality sources extracted to a raw layer, with run logging.
 > Design decisions: [docs/architecture.md](docs/architecture.md)
 
 ## Quick start (Phase 1)
@@ -31,7 +31,7 @@ action is needed.
 |---|---|---|
 | 1 | Architecture, schema, config | ✅ |
 | 2 | Weather extractor (Open-Meteo) | ✅ |
-| 3 | Air-quality extractor (OpenAQ) — 3a discovery ✅, 3b extractor ⏳ | |
+| 3 | Air quality: 3a discovery, 3b OpenAQ, 3c Open-Meteo AQ | ✅ (pending live check) |
 | 4 | Transformations | |
 | 5–8 | Loading, incremental, idempotency | |
 | 9 | Airflow DAG | |
