@@ -31,7 +31,7 @@ action is needed.
 |---|---|---|
 | 1 | Architecture, schema, config | ✅ |
 | 2 | Weather extractor (Open-Meteo) | ✅ |
-| 3 | Air-quality extractor (OpenAQ) | ⏳ |
+| 3 | Air-quality extractor (OpenAQ) — 3a discovery ✅, 3b extractor ⏳ | |
 | 4 | Transformations | |
 | 5–8 | Loading, incremental, idempotency | |
 | 9 | Airflow DAG | |

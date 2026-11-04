@@ -135,3 +135,23 @@ retries. The retry is safe because identical payloads are de-duplicated.
 
 **E7 — Dedup hash ignores `generationtime_ms`.** That field changes on every call; hashing
 it would make every re-fetch look new.
+
+## 8. Phase 3a — Station discovery
+
+OpenAQ is organised as location → sensors (one per pollutant) → measurements. You can't
+ask for "PM2.5 in London"; you find locations near London, then pull their PM2.5 sensor.
+`python main.py discover-stations` does the finding and writes `config/stations.yaml`,
+which the Phase 3b extractor reads. The file is committed so station choices are
+reviewable and reproducible.
+
+**Selection rules** (each one is a unit test):
+1. Drop mobile sensors, stations with no data in the last 7 days, and stations measuring
+   none of PM2.5, PM10, NO2, SO2, O3, CO.
+2. Prefer reference monitors over low-cost sensors, then stations with PM2.5, then nearest.
+3. Keep up to 3 per city. A city uses OpenAQ only if a kept station has active PM2.5;
+   otherwise it falls back to Open-Meteo air quality (decision D2).
+
+**Defensive checks:** OpenAQ's docs disagree with themselves on coordinate order
+(text says lat,lon; one example shows lon,lat). We send lat,lon and fail if any returned
+station is more than radius + 5 km away. `meta.found` can be a string like ">1000", so
+pagination stops on a short page, with a hard cap of 20 pages.
