@@ -11,7 +11,12 @@ from tests.fakes import open_meteo_payload, openaq_hour
 UTC = timezone.utc
 
 
-def store(conn, run_id, source, entity, payload, endpoint="x"):
+ENDPOINT = {"open_meteo_weather": "forecast", "open_meteo_air_quality": "air_quality",
+            "openaq": "sensors/hours"}
+
+
+def store(conn, run_id, source, entity, payload, endpoint=None):
+    endpoint = endpoint or ENDPOINT[source]
     body = json.dumps(payload).encode()
     save_raw_response(conn, run_id=run_id, source=source, endpoint=endpoint,
                       entity_key=entity, params={},
@@ -57,3 +62,12 @@ def test_openaq_from_raw_uses_stations_yaml(conn, cities, run_id):
     assert len(rep.result.kept) == 3
     assert rep.result.kept[0].city_key == info.target.city_key
     assert [r.rule_name for r in rep.result.rejected] == ["unknown_sensor"]
+
+
+def test_metadata_responses_are_not_read_as_measurements(conn, cities, run_id):
+    # Regression: discover-stations stores OpenAQ 'locations' responses under source
+    # 'openaq'. They are station metadata, not measurements, and must be ignored.
+    store(conn, run_id, "openaq", "location:london",
+          {"meta": {}, "results": [{"id": 1, "name": "Site"}]}, endpoint="locations")
+    rep = transform_source(conn, "openaq", cities, load_station_infos(cities))
+    assert rep.responses == 0 and rep.result.rejected == []

@@ -25,6 +25,15 @@ log = logging.getLogger(__name__)
 
 SOURCES = (WEATHER_SOURCE, OPEN_METEO_SOURCE, OPENAQ_SOURCE)
 
+# Which raw endpoints hold MEASUREMENTS for each source. Other endpoints under the same
+# source are metadata (e.g. OpenAQ 'locations' from discover-stations) and must not be
+# fed to a measurement transform. (Bug found on real data in Phase 4.)
+MEASUREMENT_ENDPOINTS = {
+    WEATHER_SOURCE: ("archive", "forecast"),
+    OPEN_METEO_SOURCE: ("air_quality",),
+    OPENAQ_SOURCE: ("sensors/hours",),
+}
+
 
 @dataclass
 class SourceReport:
@@ -41,12 +50,15 @@ class SourceReport:
 
 
 def read_raw(conn: psycopg.Connection, source: str) -> list[tuple]:
-    """Successful raw responses for one source: (response_id, entity_key, ingested_at, payload)."""
+    """Successful MEASUREMENT responses for one source:
+    (response_id, entity_key, ingested_at, payload)."""
     return conn.execute(
         """SELECT response_id, entity_key, ingested_at, payload
            FROM raw.api_response
-           WHERE source = %s AND http_status = 200 AND payload IS NOT NULL
-           ORDER BY response_id""", (source,)).fetchall()
+           WHERE source = %s AND endpoint = ANY(%s)
+             AND http_status = 200 AND payload IS NOT NULL
+           ORDER BY response_id""",
+        (source, list(MEASUREMENT_ENDPOINTS[source]))).fetchall()
 
 
 def load_station_infos(cities: list[City], path: Path | str = STATIONS_PATH
