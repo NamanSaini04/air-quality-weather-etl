@@ -1,0 +1,24 @@
+# Phase 1: PostgreSQL only. Airflow is added in Phase 9, the ETL app image in Phase 15.
+services:
+  postgres:
+    image: postgres:16
+    container_name: aq_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aq_weather}
+      POSTGRES_USER: ${POSTGRES_USER:-etl}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-etl}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs the DDL automatically - but ONLY on the very first start (empty volume).
+      # After schema changes, run `python main.py init-db` (safe to re-run).
+      - ./database/schemas:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-etl} -d ${POSTGRES_DB:-aq_weather}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

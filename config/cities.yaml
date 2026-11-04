@@ -1,0 +1,49 @@
+# Cities tracked by the pipeline. Add a city here, re-run `python main.py seed-locations`.
+# city_key is the stable natural key - never rename it once data is loaded.
+# climate_zone decides how seasons are assigned (see docs/architecture.md).
+
+cities:
+  - city_key: london
+    city_name: London
+    region: England
+    country_code: GB
+    latitude: 51.50740
+    longitude: -0.12780
+    timezone: Europe/London
+    climate_zone: uk_temperate
+
+  - city_key: manchester
+    city_name: Manchester
+    region: England
+    country_code: GB
+    latitude: 53.48080
+    longitude: -2.24260
+    timezone: Europe/London
+    climate_zone: uk_temperate
+
+  - city_key: birmingham
+    city_name: Birmingham
+    region: England
+    country_code: GB
+    latitude: 52.48620
+    longitude: -1.89040
+    timezone: Europe/London
+    climate_zone: uk_temperate
+
+  - city_key: delhi
+    city_name: Delhi
+    region: Delhi
+    country_code: IN
+    latitude: 28.61390
+    longitude: 77.20900
+    timezone: Asia/Kolkata
+    climate_zone: india_monsoon
+
+  - city_key: mumbai
+    city_name: Mumbai
+    region: Maharashtra
+    country_code: IN
+    latitude: 19.07600
+    longitude: 72.87770
+    timezone: Asia/Kolkata
+    climate_zone: india_monsoon
